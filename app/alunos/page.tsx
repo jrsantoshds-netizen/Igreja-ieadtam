@@ -2,12 +2,17 @@
 
 import { useState, useEffect } from 'react';
 import { UserPlus, List, Edit2, Trash2, GraduationCap, Save, Eraser } from 'lucide-react';
-import { dbGet, dbSet, generateId, generateMatricula, Aluno, Turma } from '@/lib/db';
+import { dbSave, dbDelete, generateId, generateMatricula, Aluno, Turma } from '@/lib/db';
+import { useCollection } from '@/lib/useCollection';
+import { useAuth } from '@/components/AuthProvider';
 import { useToast } from '@/components/Toast';
 import Modal from '@/components/Modal';
 
 export default function Alunos() {
-  const [alunos, setAlunos] = useState<Aluno[]>([]);
+  const { profile, user } = useAuth();
+  const { data: alunos, loading } = useCollection<Aluno>('alunos', profile?.congregacao);
+  const { data: turmas } = useCollection<Turma>('turmas', profile?.congregacao);
+  
   const [form, setForm] = useState<Partial<Aluno>>({});
   const [editId, setEditId] = useState('');
   const { toast } = useToast();
@@ -26,46 +31,41 @@ export default function Alunos() {
     });
   };
 
-  const loadAlunos = () => {
-    const data = dbGet<Aluno>('alunos');
-    setAlunos(data);
-    resetForm(data.length);
-  };
-
   useEffect(() => {
-    // eslint-disable-next-line
-    loadAlunos();
+    if (alunos.length >= 0 && !editId && !form.mat) {
+      resetForm(alunos.length);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [alunos.length]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.nome?.trim()) { toast('Preencha o nome do aluno.', 'err'); return; }
     if (!form.end?.trim()) { toast('Preencha o endereço.', 'err'); return; }
     if (!form.cont?.trim()) { toast('Preencha o contato.', 'err'); return; }
     if (!form.sexo) { toast('Selecione o sexo.', 'err'); return; }
+    if (!profile?.congregacao || !user?.uid) return;
 
-    let newAlunos = [...alunos];
-
-    if (editId) {
-      newAlunos = newAlunos.map(a => 
-        a.id === editId ? { ...a, ...form } as Aluno : a
-      );
-      toast('Aluno atualizado com sucesso!');
-    } else {
-      newAlunos.push({
-        id: generateId(),
-        mat: form.mat!,
-        nome: form.nome.trim(),
-        end: form.end.trim(),
-        cont: form.cont.trim(),
-        sexo: form.sexo,
-      });
-      toast('Aluno cadastrado com sucesso!');
+    try {
+      if (editId) {
+        const payload = { ...alunos.find(a => a.id === editId), ...form } as Aluno;
+        await dbSave('alunos', payload, profile.congregacao, user.uid);
+        toast('Aluno atualizado com sucesso!');
+      } else {
+        const payload = {
+          id: generateId(),
+          mat: form.mat!,
+          nome: form.nome.trim(),
+          end: form.end.trim(),
+          cont: form.cont.trim(),
+          sexo: form.sexo
+        };
+        await dbSave('alunos', payload, profile.congregacao, user.uid);
+        toast('Aluno cadastrado com sucesso!');
+      }
+      resetForm();
+    } catch (e) {
+      toast('Erro ao salvar!', 'err');
     }
-
-    dbSet('alunos', newAlunos);
-    setAlunos(newAlunos);
-    resetForm(newAlunos.length);
   };
 
   const handleEdit = (aluno: Aluno) => {
@@ -74,22 +74,27 @@ export default function Alunos() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const confirmDelete = () => {
-    let newAlunos = alunos.filter(a => a.id !== alunoToDelete);
-    dbSet('alunos', newAlunos);
-    
-    // Also remove from turmas
-    const turmas = dbGet<Turma>('turmas');
-    const newTurmas = turmas.map(t => ({
-      ...t,
-      alunos: t.alunos.filter((aid: string) => aid !== alunoToDelete)
-    }));
-    dbSet('turmas', newTurmas);
-    
-    setAlunos(newAlunos);
-    setIsModalOpen(false);
-    toast('Aluno excluído!', 'info');
+  const confirmDelete = async () => {
+    if (!profile?.congregacao || !user?.uid) return;
+    try {
+      await dbDelete('alunos', alunoToDelete);
+      
+      // Also remove from turmas
+      turmas.forEach(async (t) => {
+        if (t.alunos.includes(alunoToDelete)) {
+          const payload = { ...t, alunos: t.alunos.filter(aid => aid !== alunoToDelete) };
+          await dbSave('turmas', payload, profile.congregacao, user.uid);
+        }
+      });
+      
+      setIsModalOpen(false);
+      toast('Aluno excluído!', 'info');
+    } catch(e) {
+       toast('Erro ao excluir', 'err');
+    }
   };
+
+  if (loading) return <div className="p-10 animate-pulse text-gray-500">Carregando...</div>;
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-3 duration-300">

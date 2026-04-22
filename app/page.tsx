@@ -1,10 +1,21 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Users, CheckCircle, XCircle, PersonStanding, Info } from 'lucide-react';
-import { dbGet, Aluno, Turma, Licao, Dizimo, Chamada } from '@/lib/db';
+import { Users, CheckCircle, XCircle, PersonStanding, Info, BarChart3 } from 'lucide-react';
+import { Aluno, Turma, Licao, Dizimo, Chamada } from '@/lib/db';
+import { useCollection } from '@/lib/useCollection';
+import { useAuth } from '@/components/AuthProvider';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 export default function Dashboard() {
+  const { profile } = useAuth();
+  
+  const { data: alunos, loading: aLoad } = useCollection<Aluno>('alunos', profile?.congregacao);
+  const { data: turmas, loading: tLoad } = useCollection<Turma>('turmas', profile?.congregacao);
+  const { data: licoes, loading: lLoad } = useCollection<Licao>('licoes', profile?.congregacao);
+  const { data: dizimos, loading: dLoad } = useCollection<Dizimo>('dizimos', profile?.congregacao);
+  const { data: chamadas, loading: cLoad } = useCollection<Chamada>('chamadas', profile?.congregacao);
+
   const [stats, setStats] = useState({
     totalAlunos: 0,
     presentes: 0,
@@ -15,26 +26,53 @@ export default function Dashboard() {
     totalOfertas: 0,
     totalChamadas: 0,
   });
+  
+  const [chartData, setChartData] = useState<any[]>([]);
 
   useEffect(() => {
-    const alunos = dbGet<Aluno>('alunos');
-    const turmas = dbGet<Turma>('turmas');
-    const licoes = dbGet<Licao>('licoes');
-    const dizimos = dbGet<Dizimo>('dizimos');
-    const chamadas = dbGet<Chamada>('chamadas');
+    if (aLoad || tLoad || lLoad || dLoad || cLoad) return;
 
     let presentes = 0;
     let ausentes = 0;
     let visitantes = 0;
 
     if (chamadas.length > 0) {
-      const ult = chamadas[chamadas.length - 1];
+      const sortedChamadas = [...chamadas].sort((a,b) => new Date(a.data).getTime() - new Date(b.data).getTime());
+      const ult = sortedChamadas[sortedChamadas.length - 1];
       for (const reg of ult.registros) {
         if (reg.status === 'presente') presentes++;
         else if (reg.status === 'ausente') ausentes++;
         else if (reg.status === 'visitante') visitantes++;
       }
+      if (ult.qtdVisitante) visitantes += ult.qtdVisitante;
     }
+
+    const recentDict: Record<string, {name: string, Presentes: number, Ausentes: number, Visitantes: number}> = {};
+    chamadas.forEach(c => {
+      let p=0, a=0, v=0;
+      c.registros.forEach(r => {
+        if (r.status === 'presente') p++;
+        else if (r.status === 'ausente') a++;
+        else if (r.status === 'visitante') v++;
+      });
+      if (c.qtdVisitante) v += c.qtdVisitante;
+      
+      const dateKey = c.data;
+      if (!recentDict[dateKey]) {
+        recentDict[dateKey] = {
+           name: dateKey.split('-').reverse().slice(0, 2).join('/'),
+           Presentes: 0, Ausentes: 0, Visitantes: 0
+        };
+      }
+      recentDict[dateKey].Presentes += p;
+      recentDict[dateKey].Ausentes += a;
+      recentDict[dateKey].Visitantes += v;
+    });
+    
+    // Sort and get last 10 dates
+    const sortedKeys = Object.keys(recentDict).sort();
+    const finalChartData = sortedKeys.slice(-10).map(k => recentDict[k]);
+    setChartData(finalChartData);
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -51,7 +89,6 @@ export default function Dashboard() {
       totalOfertas += d.valor;
     }
 
-    // eslint-disable-next-line
     setStats({
       totalAlunos: alunos.length,
       presentes,
@@ -62,7 +99,7 @@ export default function Dashboard() {
       totalOfertas,
       totalChamadas: chamadas.length,
     });
-  }, []);
+  }, [alunos, turmas, licoes, dizimos, chamadas, aLoad, tLoad, lLoad, dLoad, cLoad]);
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-3 duration-300">
@@ -103,28 +140,56 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="bg-[var(--color-card)] rounded-[10px] p-[22px] shadow-[0_1px_8px_rgba(0,0,0,0.04)] border border-[var(--color-border)] hover:shadow-[0_4px_20px_rgba(0,0,0,0.06)] transition-shadow">
-        <h3 className="font-serif text-[17px] font-bold text-[var(--color-primary)] mb-4 flex items-center gap-2">
-          <Info size={18} className="text-[var(--color-accent)]" /> Resumo Geral
-        </h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-[13px]">
-          <div className="p-[15px] rounded-lg transition-transform hover:-translate-y-[2px] bg-[var(--color-primary-pale)]">
-            <div className="text-[11.5px] text-[var(--color-muted)] mb-1">Turmas Cadastradas</div>
-            <div className="text-[21px] font-bold text-[var(--color-primary)]">{stats.totalTurmas}</div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 bg-[var(--color-card)] rounded-[10px] p-[22px] shadow-[0_1px_8px_rgba(0,0,0,0.04)] border border-[var(--color-border)] hover:shadow-[0_4px_20px_rgba(0,0,0,0.06)] transition-shadow">
+          <h3 className="font-serif text-[17px] font-bold text-[var(--color-primary)] mb-4 flex items-center gap-2">
+            <BarChart3 size={18} className="text-[var(--color-accent)]" /> Desempenho de Frequência (Anterior)
+          </h3>
+          <div className="w-full h-[300px]">
+            {chartData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#eaeaea" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#888' }} />
+                  <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#888' }} />
+                  <Tooltip wrapperStyle={{ borderRadius: '8px', overflow: 'hidden' }} cursor={{ fill: '#f5f5f5' }} />
+                  <Legend iconType="circle" wrapperStyle={{ fontSize: '13px' }} />
+                  <Bar dataKey="Presentes" fill="var(--color-success)" radius={[4, 4, 0, 0]} barSize={20} />
+                  <Bar dataKey="Visitantes" fill="var(--color-info)" radius={[4, 4, 0, 0]} barSize={20} />
+                  <Bar dataKey="Ausentes" fill="var(--color-danger)" radius={[4, 4, 0, 0]} barSize={20} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-[var(--color-muted)] text-[14px]">
+                Nenhuma chamada registrada ainda.
+              </div>
+            )}
           </div>
-          <div className="p-[15px] rounded-lg transition-transform hover:-translate-y-[2px] bg-[var(--color-accent-light)]">
-            <div className="text-[11.5px] text-[var(--color-muted)] mb-1">Lições Ativas</div>
-            <div className="text-[21px] font-bold text-[var(--color-accent)]">{stats.licoesAtivas}</div>
-          </div>
-          <div className="p-[15px] rounded-lg transition-transform hover:-translate-y-[2px] bg-[var(--color-success-light)]">
-            <div className="text-[11.5px] text-[var(--color-muted)] mb-1">Total em Ofertas</div>
-            <div className="text-[21px] font-bold text-[var(--color-success)]">
-              R$ {stats.totalOfertas.toFixed(2).replace('.', ',')}
+        </div>
+
+        <div className="bg-[var(--color-card)] rounded-[10px] p-[22px] shadow-[0_1px_8px_rgba(0,0,0,0.04)] border border-[var(--color-border)] hover:shadow-[0_4px_20px_rgba(0,0,0,0.06)] transition-shadow">
+          <h3 className="font-serif text-[17px] font-bold text-[var(--color-primary)] mb-4 flex items-center gap-2">
+            <Info size={18} className="text-[var(--color-accent)]" /> Resumo Geral
+          </h3>
+          <div className="grid grid-cols-1 gap-[13px]">
+            <div className="p-[15px] rounded-lg transition-transform hover:-translate-y-[2px] bg-[var(--color-primary-pale)] flex justify-between items-center">
+              <div className="text-[12.5px] text-[var(--color-muted)]">Turmas Cadastradas</div>
+              <div className="text-[21px] font-bold text-[var(--color-primary)]">{stats.totalTurmas}</div>
             </div>
-          </div>
-          <div className="p-[15px] rounded-lg transition-transform hover:-translate-y-[2px] bg-[var(--color-info-light)]">
-            <div className="text-[11.5px] text-[var(--color-muted)] mb-1">Chamadas Realizadas</div>
-            <div className="text-[21px] font-bold text-[var(--color-info)]">{stats.totalChamadas}</div>
+            <div className="p-[15px] rounded-lg transition-transform hover:-translate-y-[2px] bg-[var(--color-accent-light)] flex justify-between items-center">
+              <div className="text-[12.5px] text-[var(--color-muted)]">Lições Ativas</div>
+              <div className="text-[21px] font-bold text-[var(--color-accent)]">{stats.licoesAtivas}</div>
+            </div>
+            <div className="p-[15px] rounded-lg transition-transform hover:-translate-y-[2px] bg-[var(--color-success-light)] flex justify-between items-center">
+              <div className="text-[12.5px] text-[var(--color-muted)]">Total em Ofertas</div>
+              <div className="text-[21px] font-bold text-[var(--color-success)]">
+                R$ {stats.totalOfertas.toFixed(2).replace('.', ',')}
+              </div>
+            </div>
+            <div className="p-[15px] rounded-lg transition-transform hover:-translate-y-[2px] bg-[var(--color-info-light)] flex justify-between items-center">
+              <div className="text-[12.5px] text-[var(--color-muted)]">Chamadas Realizadas</div>
+              <div className="text-[21px] font-bold text-[var(--color-info)]">{stats.totalChamadas}</div>
+            </div>
           </div>
         </div>
       </div>

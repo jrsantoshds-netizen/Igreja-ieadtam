@@ -2,12 +2,16 @@
 
 import { useState, useEffect } from 'react';
 import { Book, List, Edit2, Trash2, BookOpen, Save, Eraser } from 'lucide-react';
-import { dbGet, dbSet, generateId, generateCodLicao, Licao } from '@/lib/db';
+import { dbSave, dbDelete, generateId, generateCodLicao, Licao } from '@/lib/db';
+import { useCollection } from '@/lib/useCollection';
+import { useAuth } from '@/components/AuthProvider';
 import { useToast } from '@/components/Toast';
 import Modal from '@/components/Modal';
 
 export default function Licoes() {
-  const [licoes, setLicoes] = useState<Licao[]>([]);
+  const { profile, user } = useAuth();
+  const { data: licoes, loading } = useCollection<Licao>('licoes', profile?.congregacao);
+  
   const [form, setForm] = useState<Partial<Licao>>({});
   const [editId, setEditId] = useState('');
   
@@ -25,44 +29,39 @@ export default function Licoes() {
     });
   };
 
-  const loadData = () => {
-    const data = dbGet<Licao>('licoes');
-    setLicoes(data);
-    resetForm(data.length);
-  };
-
   useEffect(() => {
-    // eslint-disable-next-line
-    loadData();
+    if (licoes.length >= 0 && !editId && !form.cod) {
+      resetForm(licoes.length);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [licoes.length]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.nome?.trim()) { toast('Preencha o nome da lição.', 'err'); return; }
     if (!form.ini || !form.fim) { toast('Preencha as datas.', 'err'); return; }
     if (new Date(form.fim) < new Date(form.ini)) { toast('Data final deve ser posterior ao início.', 'err'); return; }
+    if (!profile?.congregacao || !user?.uid) return;
 
-    let newLicoes = [...licoes];
-
-    if (editId) {
-      newLicoes = newLicoes.map(l => 
-        l.id === editId ? { ...l, ...form } as Licao : l
-      );
-      toast('Lição atualizada com sucesso!');
-    } else {
-      newLicoes.push({
-        id: generateId(),
-        cod: form.cod!,
-        nome: form.nome.trim(),
-        ini: form.ini,
-        fim: form.fim,
-      });
-      toast('Lição cadastrada com sucesso!');
+    try {
+      if (editId) {
+        const payload = { ...licoes.find(l => l.id === editId), ...form } as Licao;
+        await dbSave('licoes', payload, profile.congregacao, user.uid);
+        toast('Lição atualizada com sucesso!');
+      } else {
+        const payload = {
+          id: generateId(),
+          cod: form.cod!,
+          nome: form.nome.trim(),
+          ini: form.ini,
+          fim: form.fim,
+        };
+        await dbSave('licoes', payload, profile.congregacao, user.uid);
+        toast('Lição cadastrada com sucesso!');
+      }
+      resetForm();
+    } catch (e) {
+      toast('Erro ao salvar!', 'err');
     }
-
-    dbSet('licoes', newLicoes);
-    setLicoes(newLicoes);
-    resetForm(newLicoes.length);
   };
 
   const handleEdit = (licao: Licao) => {
@@ -71,12 +70,14 @@ export default function Licoes() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const confirmDelete = () => {
-    const newLicoes = licoes.filter(l => l.id !== licaoToDelete);
-    dbSet('licoes', newLicoes);
-    setLicoes(newLicoes);
-    setIsModalOpen(false);
-    toast('Lição excluída!', 'info');
+  const confirmDelete = async () => {
+    try {
+      await dbDelete('licoes', licaoToDelete);
+      setIsModalOpen(false);
+      toast('Lição excluída!', 'info');
+    } catch (e) {
+      toast('Erro ao excluir', 'err');
+    }
   };
 
   const statusLicao = (l: Licao) => {
@@ -95,6 +96,8 @@ export default function Licoes() {
     const split = d.split('-');
     return `${split[2]}/${split[1]}/${split[0]}`;
   };
+
+  if (loading) return <div className="p-10 animate-pulse text-gray-500">Carregando...</div>;
 
   return (
     <div className="animate-in fade-in slide-in-from-bottom-3 duration-300">

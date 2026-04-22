@@ -1,7 +1,7 @@
 import type {Metadata} from 'next';
 import { Playfair_Display, Source_Sans_3 } from 'next/font/google';
 import './globals.css'; 
-import SidebarLayout from '@/components/SidebarLayout';
+import RootLayoutClient from '@/components/RootLayoutClient';
 import { ToastProvider } from '@/components/Toast';
 
 const playfair = Playfair_Display({
@@ -22,11 +22,11 @@ export const metadata: Metadata = {
 export default function RootLayout({children}: {children: React.ReactNode}) {
   return (
     <html lang="pt-BR" className={`${playfair.variable} ${sourceSans.variable}`}>
-      <body suppressHydrationWarning className="antialiased min-h-screen flex">
+      <body suppressHydrationWarning className="antialiased min-h-screen flex text-gray-900 bg-[#f4f1eb]">
         <ToastProvider>
-          <SidebarLayout>
+          <RootLayoutClient>
             {children}
-          </SidebarLayout>
+          </RootLayoutClient>
         </ToastProvider>
       </body>
     </html>

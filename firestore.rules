@@ -1,0 +1,158 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} { allow read, write: if false; }
+
+    function isValidId(id) { 
+        return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); 
+    }
+    
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isSignedIn() { return request.auth != null; } // allow password auth without email verif if needed, but per rule: "verified email" is strictly mandated UNLESS app explicitly supports anon. Since this is an internal admin dashboard, demanding email verification is good.
+    function isVerified() { return isSignedIn() && request.auth.token.email_verified == true; }
+    
+    // Auth lookups
+    function getUserRecord() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    function isAdmin() {
+      // By token email for bootstrap
+      return isVerified() && (request.auth.token.email == "jrsantos.hds@gmail.com" || getUserRecord().role == "admin");
+    }
+    
+    function getUserCongregacao() {
+      return isAdmin() ? "*" : getUserRecord().congregacao;
+    }
+    
+    function hasCongregacaoAccess(cong) {
+      return isAdmin() || cong == getUserCongregacao();
+    }
+    
+    function isSystemFieldsValid() {
+      return ("createdAt" in incoming().keys()) && incoming().createdAt == request.time && 
+             ("createdBy" in incoming().keys()) && incoming().createdBy == request.auth.uid;
+    }
+
+    // -- USERS -- 
+    function isValidUser(data) {
+       return data.keys().hasAll(['congregacao', 'role', 'email', 'nome']) &&
+              data.keys().size() <= 6 &&
+              data.congregacao is string && data.congregacao.size() > 0 && data.congregacao.size() <= 100 &&
+              data.role is string && (data.role == 'admin' || data.role == 'usuario') &&
+              data.email is string && data.email.size() > 0 && data.email.size() <= 150 &&
+              data.nome is string && data.nome.size() > 0 && data.nome.size() <= 150 &&
+              (!('createdAt' in data.keys()) || data.createdAt is timestamp);
+    }
+    
+    match /users/{userId} {
+      allow get: if isVerified() && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+      
+      allow create: if isVerified() && isValidId(userId) && request.auth.uid == userId &&
+                    isValidUser(incoming()) && incoming().createdAt == request.time &&
+                    incoming().email == request.auth.token.email &&
+                    // Only jrsantos can create admin, or admin creating themselves... actually forbid admin creation unless email matches
+                    (incoming().role == 'usuario' || request.auth.token.email == "jrsantos.hds@gmail.com");
+                    
+      allow update: if isVerified() && isValidUser(incoming()) &&
+                    (
+                      isAdmin() || 
+                      (request.auth.uid == userId && incoming().diff(existing()).affectedKeys().hasOnly(['nome', 'congregacao']) &&
+                       incoming().role == existing().role // Cannot escalate privilege
+                      )
+                    ) &&
+                    incoming().createdAt == existing().createdAt;
+      allow delete: if isAdmin();
+    }
+
+    // Shared Entity Validation Helpers
+    function isValidAluno(data) {
+      return data.keys().hasAll(['congregacao', 'mat', 'nome', 'end', 'cont', 'sexo']) && data.keys().size() <= 9 &&
+             data.congregacao is string && data.congregacao.size() > 0 && data.congregacao.size() <= 100 &&
+             data.mat is string && data.mat.size() <= 50 &&
+             data.nome is string && data.nome.size() > 0 && data.nome.size() <= 200 &&
+             data.end is string && data.end.size() <= 500 &&
+             data.cont is string && data.cont.size() <= 100 &&
+             data.sexo is string && data.sexo.size() <= 20;
+    }
+
+    function isValidLicao(data) {
+      return data.keys().hasAll(['congregacao', 'cod', 'nome', 'ini', 'fim']) && data.keys().size() <= 8 &&
+             data.congregacao is string && data.congregacao.size() > 0 && data.congregacao.size() <= 100 &&
+             data.cod is string && data.cod.size() > 0 && data.cod.size() <= 50 &&
+             data.nome is string && data.nome.size() > 0 && data.nome.size() <= 200 &&
+             data.ini is string && data.ini.size() <= 20 &&
+             data.fim is string && data.fim.size() <= 20;
+    }
+    
+    function isValidTurma(data) {
+      return data.keys().hasAll(['congregacao', 'nome', 'prof', 'turno', 'licaoId', 'alunos']) && data.keys().size() <= 9 &&
+             data.congregacao is string && data.congregacao.size() > 0 && data.congregacao.size() <= 100 &&
+             data.nome is string && data.nome.size() > 0 && data.nome.size() <= 200 &&
+             data.prof is string && data.prof.size() <= 200 &&
+             data.turno is string && data.turno.size() <= 50 &&
+             data.licaoId is string && data.licaoId.size() <= 128 &&
+             data.alunos is list && data.alunos.size() <= 500 &&
+             (data.alunos.size() == 0 || data.alunos[0] is string);
+    }
+    
+    function isValidDizimo(data) {
+      return data.keys().hasAll(['congregacao', 'turmaId', 'turmaNome', 'turno', 'valor', 'data']) && data.keys().size() <= 9 &&
+             data.congregacao is string && data.congregacao.size() > 0 && data.congregacao.size() <= 100 &&
+             data.turmaId is string && data.turmaId.size() <= 128 &&
+             data.turmaNome is string && data.turmaNome.size() <= 200 &&
+             data.turno is string && data.turno.size() <= 50 &&
+             data.valor is number &&
+             data.data is string && data.data.size() <= 20;
+    }
+    
+    function isValidChamada(data) {
+      return data.keys().hasAll(['congregacao', 'turmaId', 'turmaNome', 'data', 'registros', 'qtdBiblia', 'qtdRevista']) && data.keys().size() <= 11 &&
+             data.congregacao is string && data.congregacao.size() > 0 && data.congregacao.size() <= 100 &&
+             data.turmaId is string && data.turmaId.size() <= 128 &&
+             data.turmaNome is string && data.turmaNome.size() <= 200 &&
+             data.data is string && data.data.size() <= 20 &&
+             data.registros is list && data.registros.size() <= 500 &&
+             (data.registros.size() == 0 || data.registros[0] is map) &&
+             data.qtdBiblia is number &&
+             data.qtdRevista is number &&
+             (!('qtdVisitante' in data.keys()) || data.qtdVisitante is number);
+    }
+
+    // Generic Rules for multi-tenant collections
+    match /{col}/{docId} {
+      allow get: if isVerified() && isValidId(docId) && 
+                 (col in ['alunos', 'licoes', 'turmas', 'dizimos', 'chamadas']) &&
+                 hasCongregacaoAccess(existing().congregacao);
+      allow list: if isVerified() && (col in ['alunos', 'licoes', 'turmas', 'dizimos', 'chamadas']) &&
+                  hasCongregacaoAccess(resource.data.congregacao);
+      
+      allow create: if isVerified() && isValidId(docId) && (col in ['alunos', 'licoes', 'turmas', 'dizimos', 'chamadas']) &&
+                    hasCongregacaoAccess(incoming().congregacao) && isSystemFieldsValid() &&
+                    (
+                      (col == 'alunos' && isValidAluno(incoming())) ||
+                      (col == 'licoes' && isValidLicao(incoming())) ||
+                      (col == 'turmas' && isValidTurma(incoming())) ||
+                      (col == 'dizimos' && isValidDizimo(incoming())) ||
+                      (col == 'chamadas' && isValidChamada(incoming()))
+                    );
+                    
+      allow update: if isVerified() && isValidId(docId) && (col in ['alunos', 'licoes', 'turmas', 'dizimos', 'chamadas']) &&
+                    hasCongregacaoAccess(existing().congregacao) &&
+                    incoming().congregacao == existing().congregacao && // Immutable congregation
+                    incoming().createdAt == existing().createdAt &&
+                    incoming().createdBy == existing().createdBy &&
+                    (
+                      (col == 'alunos' && isValidAluno(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['mat', 'nome', 'end', 'cont', 'sexo'])) ||
+                      (col == 'licoes' && isValidLicao(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['cod', 'nome', 'ini', 'fim'])) ||
+                      (col == 'turmas' && isValidTurma(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['nome', 'prof', 'turno', 'licaoId', 'alunos'])) ||
+                      (col == 'dizimos' && isValidDizimo(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['turmaId', 'turmaNome', 'turno', 'valor', 'data'])) ||
+                      (col == 'chamadas' && isValidChamada(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['turmaId', 'turmaNome', 'data', 'registros', 'qtdBiblia', 'qtdRevista', 'qtdVisitante']))
+                    );
+
+      allow delete: if isVerified() && isValidId(docId) && (col in ['alunos', 'licoes', 'turmas', 'dizimos', 'chamadas']) &&
+                    hasCongregacaoAccess(existing().congregacao);
+    }
+  }
+}

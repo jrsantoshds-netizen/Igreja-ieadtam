@@ -2,7 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { ClipboardCheck, Check, X, PersonStanding, History, Save, Trash2, FileText, Book, BookOpen, Upload } from 'lucide-react';
-import { dbGet, dbSet, generateId, Turma, Chamada, Aluno } from '@/lib/db';
+import { dbSave, dbDelete, generateId, Turma, Chamada, Aluno, Dizimo } from '@/lib/db';
+import { useCollection } from '@/lib/useCollection';
+import { useAuth } from '@/components/AuthProvider';
 import { useToast } from '@/components/Toast';
 import Modal from '@/components/Modal';
 
@@ -11,9 +13,12 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 export default function Chamadas() {
-  const [chamadas, setChamadas] = useState<Chamada[]>([]);
-  const [turmas, setTurmas] = useState<Turma[]>([]);
-  const [alunos, setAlunos] = useState<Aluno[]>([]);
+  const { profile, user } = useAuth();
+  const { data: chamadas, loading: cLoad } = useCollection<Chamada>('chamadas', profile?.congregacao);
+  const { data: turmas, loading: tLoad } = useCollection<Turma>('turmas', profile?.congregacao);
+  const { data: alunos, loading: aLoad } = useCollection<Aluno>('alunos', profile?.congregacao);
+  const { data: licoes } = useCollection<any>('licoes', profile?.congregacao);
+  const { data: dizimos } = useCollection<Dizimo>('dizimos', profile?.congregacao);
   
   const [turmaId, setTurmaId] = useState('');
   const [dataChamada, setDataChamada] = useState('');
@@ -28,17 +33,8 @@ export default function Chamadas() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [chamadaToDelete, setChamadaToDelete] = useState('');
 
-  const loadData = () => {
-    setChamadas(dbGet<Chamada>('chamadas'));
-    setTurmas(dbGet<Turma>('turmas'));
-    setAlunos(dbGet<Aluno>('alunos'));
-    setDataChamada(new Date().toISOString().split('T')[0]);
-  };
-
   useEffect(() => {
-    // eslint-disable-next-line
-    loadData();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    setDataChamada(new Date().toISOString().split('T')[0]);
   }, []);
 
   const handleTurmaChange = (selectedTurmaId: string) => {
@@ -65,9 +61,10 @@ export default function Chamadas() {
     setChEstado(newState);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!turmaId) { toast('Selecione uma turma.', 'err'); return; }
     if (!dataChamada) { toast('Selecione a data.', 'err'); return; }
+    if (!profile?.congregacao || !user?.uid) return;
 
     const turma = turmas.find(t => t.id === turmaId);
     
@@ -84,37 +81,54 @@ export default function Chamadas() {
       });
     }
 
-    const newChamadas = [...chamadas];
-    newChamadas.push({
-      id: generateId(),
-      turmaId,
-      turmaNome: turma ? turma.nome : '?',
-      data: dataChamada,
-      registros,
-      qtdBiblia,
-      qtdRevista,
-      qtdVisitante
+    try {
+      const payload = {
+        id: generateId(),
+        turmaId,
+        turmaNome: turma ? turma.nome : '?',
+        data: dataChamada,
+        registros,
+        qtdBiblia,
+        qtdRevista,
+        qtdVisitante
+      };
+
+      await dbSave('chamadas', payload, profile.congregacao, user.uid);
+      toast('Chamada salva!');
+      
+      setTurmaId('');
+      setDataChamada(new Date().toISOString().split('T')[0]);
+      setQtdBiblia(0);
+      setQtdRevista(0);
+      setQtdVisitante(0);
+      setChEstado({});
+    } catch(e) {
+      toast('Erro ao salvar', 'err');
+    }
+  };
+
+  const confirmDelete = async () => {
+    try {
+      await dbDelete('chamadas', chamadaToDelete);
+      setIsModalOpen(false);
+      toast('Chamada excluída!', 'info');
+    } catch(e) {
+      toast('Erro ao excluir', 'err');
+    }
+  };
+  //pegar figura 
+  const getBase64ImageFromUrl = async (imageUrl: string) => {
+    const res = await fetch(imageUrl);
+    const blob = await res.blob();
+    return new Promise((resolve, reject) => {
+     const reader = new FileReader();
+     reader.addEventListener("load", () => resolve(reader.result), false);
+     reader.onerror = () => reject(reader.error);
+     reader.readAsDataURL(blob);
     });
-
-    dbSet('chamadas', newChamadas);
-    setChamadas(newChamadas);
-    toast('Chamada salva!');
-    
-    setTurmaId('');
-    setDataChamada(new Date().toISOString().split('T')[0]);
-    setQtdBiblia(0);
-    setQtdRevista(0);
-    setQtdVisitante(0);
-    setChEstado({});
   };
+  //===============fim
 
-  const confirmDelete = () => {
-    const newChamadas = chamadas.filter(c => c.id !== chamadaToDelete);
-    dbSet('chamadas', newChamadas);
-    setChamadas(newChamadas);
-    setIsModalOpen(false);
-    toast('Chamada excluída!', 'info');
-  };
 
   const [isGenerating, setIsGenerating] = useState(false);
   const gerarPDF = async (chamadaId: string) => {
@@ -130,8 +144,7 @@ export default function Chamadas() {
       const turma = turmas.find(t => t.id === chamada.turmaId);
       let licao = null;
       if (turma) {
-        const licoes = dbGet<any>('licoes');
-        licao = licoes.find((l: any) => l.id === turma.licaoId);
+        licao = licoes?.find((l: any) => l.id === turma.licaoId);
       }
 
       const presentes: any[] = [];
@@ -144,58 +157,64 @@ export default function Chamadas() {
         else ausentes.push(reg);
       });
 
-      const dizimos = dbGet<any>('dizimos');
-      const dizFiltrados = dizimos.filter((d: any) => d.turmaId === chamada.turmaId && d.data === chamada.data);
-      const valorDizimo = dizFiltrados.reduce((acc: number, cur: any) => acc + cur.valor, 0);
+      // Filter dizimos directly from the synced collection state
+      const dizFiltrados = dizimos.filter((d) => d.turmaId === chamada.turmaId && d.data === chamada.data);
+      const valorDizimo = dizFiltrados.reduce((acc, cur) => acc + cur.valor, 0);
 
       const margin = 15;
       const pw = doc.internal.pageSize.getWidth();
       const ph = doc.internal.pageSize.getHeight();
 
-      // Fetch logo as base64
-      let logoBase64 = null;
-      try {
-        const savedLogo = localStorage.getItem('app_logo');
-        if (savedLogo) {
-          logoBase64 = savedLogo;
-        } else {
-          const logoUrl = 'https://z-cdn-media.chatglm.cn/files/03a5ef41-f7b6-4ed2-a240-4d9c1dc4793b.png?auth_key=1876650640-c3016c3123344dec99c7e0febd679e91-0-d7db01960d2dc11a359a1b2e2f825106';
-          const res = await fetch(`/api/image-proxy?url=${encodeURIComponent(logoUrl)}`);
-          if (res.ok) {
-            const json = await res.json();
-            logoBase64 = json.dataUrl;
-          }
-        }
-      } catch (err) {
-        console.error('Failed to load logo for PDF', err);
-      }
+      // ... dentro da função gerarPDF, após criar o 'const doc = new jsPDF...'
 
-      // CABEÇALHO
-      // Cabeçalho verde
-      doc.setFillColor(20, 53, 42); // primary green
+      // Carrega a imagem da sua pasta /public
+      const logoUrl = '/logo2.png'; 
+      const imgData = await getBase64ImageFromUrl(logoUrl) as string;
+
+      // CABEÇALHO VERDE
+      doc.setFillColor(20, 53, 42); 
       doc.rect(0, 0, pw, 70, 'F');
-      
+
       const centerX = pw / 2;
 
-      if (logoBase64) {
-        // Encaixa a arte como se fosse um carimbo/emblema sem bordas manuais
-        // já que a imagem nova tem as próprias bordas e fundos integrados.
-        doc.addImage(logoBase64, 'PNG', centerX - 20, 5, 40, 40);
-      } else {
-        doc.setFillColor(166, 126, 61);
-        doc.circle(centerX, 28, 18, 'F');
-        doc.setFontSize(14); 
-        doc.setTextColor(255, 255, 255); 
-        doc.text('IEADTAM', centerX, 30, { align: 'center' });
-      }
+      // CÍRCULO BRANCO (Para destacar o logo retangular)
+      doc.setFillColor(255, 255, 255);
+      doc.circle(centerX, 30, 22, 'F'); 
 
-      // IEADTAM centralizado abaixo
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(22); doc.setTextColor(255, 255, 255);
-      doc.text('IEADTAM', centerX, 58, { align: 'center' });
+      // BORDA DOURADA DO CÍRCULO
+      doc.setDrawColor(166, 126, 61);
+      doc.setLineWidth(1);
+      doc.circle(centerX, 30, 22, 'S');
+
+      // 1. Aumentamos o raio do círculo (de 22 para 30)
+      const raioCirculo = 32; 
+      const posYCentro = 32; // Ajustei levemente a descida do círculo
+
+
+
+      // CHAMA A IMAGEM
+      // Parâmetros: imagem, formato, x, y, largura, altura
+      const imgW = 28; 
+      const imgH = 28;
+
+      // 3. Ajustamos a posição Y da imagem (o terceiro parâmetro)
+      // Para centralizar verticalmente no círculo: posYCentro - (imgH / 2)
+      const posYImagem = posYCentro - (imgH / 2);
+
+      doc.addImage(imgData, 'PNG', centerX - (imgW / 2), posYImagem, imgW, imgH);
+      //doc.addImage(imgData, 'PNG', centerX - (imgW / 2), 16, imgW, imgH);
+
+      // TÍTULO ABAIXO DO LOGO
+      doc.setFont('helvetica', 'bold'); 
+      doc.setFontSize(22); 
+      doc.setTextColor(255, 255, 255);
+      doc.text('IEADTAM', centerX, 60, { align: 'center' });
+
+      // ... segue o restante do seu código (Linha Dourada, Info da Chamada, etc)
 
       // Dados Extras à Esquerda Escopo
       doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(200, 180, 140);
-      doc.text('Igreja Evang. Assembleia de Deus', margin, 53, { align: 'left' });
+      //doc.text('Igreja Evang. Assembleia de Deus Tradicional do Amazonas', margin, 53, { align: 'left' });
       doc.setFont('helvetica', 'normal');
       doc.text('Presença Eterna do Espirito Santo', margin, 58, { align: 'left' });
 
@@ -203,7 +222,7 @@ export default function Chamadas() {
       doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(200, 134, 42);
       doc.text('RELATÓRIO EBD', pw - margin, 53, { align: 'right' });
       doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(180, 180, 180);
-      doc.text('Escola Bíblica Dominical', pw - margin, 58, { align: 'right' });
+      doc.text(profile?.congregacao && profile.congregacao !== '*' ? `Congregação: ${profile.congregacao}` : 'Escola Bíblica Dominical', pw - margin, 58, { align: 'right' });
 
       // Linha Dourada de Fechamento do Cabeçalho
       doc.setDrawColor(200, 134, 42); // accent gold line
@@ -242,74 +261,47 @@ export default function Chamadas() {
 
       y += 42; // Move Y below the Call Info box
 
-      // TABELA PRESENTES
+      // TABELA UNIFICADA ALUNOS E STATUS
       doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(20, 53, 42);
-      doc.text('Alunos Presentes', margin, y);
+      doc.text('Frequência C/ Status', margin, y);
       doc.setDrawColor(200, 134, 42); doc.setLineWidth(0.6); doc.line(margin, y + 1, margin + 45, y + 1);
       y += 6;
 
-      if (presentes.length === 0) {
+      const unifiedRecords = chamada.registros.map((reg, i) => {
+        const al = alunos.find(a => a.id === reg.alunoId);
+        let statusStr = "—";
+        if (reg.status === 'presente') statusStr = 'Presente';
+        if (reg.status === 'ausente') statusStr = 'Ausente';
+        if (reg.status === 'visitante') statusStr = 'Visitante';
+        return [i + 1, reg.alunoNome, al ? al.mat : '—', statusStr];
+      });
+
+      if (unifiedRecords.length === 0) {
         doc.setFont('helvetica', 'italic'); doc.setFontSize(10); doc.setTextColor(140, 130, 120);
-        doc.text('Nenhum aluno presente.', margin + 4, y + 6); 
+        doc.text('Nenhum aluno registrado.', margin + 4, y + 6); 
         y += 14;
       } else {
-        const bodyP = presentes.map((p, i) => {
-          const al = alunos.find(a => a.id === p.alunoId);
-          return [i + 1, p.alunoNome, al ? al.mat : '—'];
-        });
-
         autoTable(doc, {
           startY: y, theme: 'plain', margin: { left: margin, right: margin },
-          head: [['#', 'Nome do Aluno', 'Matrícula']],
-          body: bodyP,
+          head: [['#', 'Nome do Aluno', 'Matrícula', 'Status']],
+          body: unifiedRecords,
           headStyles: { fillColor: [20, 53, 42], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9, cellPadding: 3 },
           bodyStyles: { fontSize: 9.5, cellPadding: 3, textColor: [42, 37, 32] },
           alternateRowStyles: { fillColor: [248, 245, 240] },
-          columnStyles: { 0: { halign: 'center', cellWidth: 12 }, 2: { halign: 'center', cellWidth: 25 } }
-        });
-        y = (doc as any).lastAutoTable.finalY + 4;
-      }
-
-      // TABELA VISITANTES
-      if (visitantes.length > 0) {
-        if (y > ph - 60) { doc.addPage(); y = 20; }
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(20, 53, 42);
-        doc.text('Visitantes', margin, y);
-        doc.setDrawColor(200, 134, 42); doc.setLineWidth(0.6); doc.line(margin, y + 1, margin + 30, y + 1); 
-        y += 6;
-
-        const bodyV = visitantes.map((v, i) => [i + 1, v.alunoNome]);
-        autoTable(doc, {
-          startY: y, theme: 'plain', margin: { left: margin, right: margin },
-          head: [['#', 'Nome do Visitante']], body: bodyV,
-          headStyles: { fillColor: [29, 111, 165], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9, cellPadding: 3 },
-          bodyStyles: { fontSize: 9.5, cellPadding: 3, textColor: [42, 37, 32] },
-          alternateRowStyles: { fillColor: [248, 245, 240] },
-          columnStyles: { 0: { halign: 'center', cellWidth: 12 } }
-        });
-        y = (doc as any).lastAutoTable.finalY + 4;
-      }
-
-      // TABELA AUSENTES
-      if (ausentes.length > 0) {
-        if (y > ph - 60) { doc.addPage(); y = 20; }
-        doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(20, 53, 42);
-        doc.text('Alunos Ausentes', margin, y);
-        doc.setDrawColor(200, 134, 42); doc.setLineWidth(0.6); doc.line(margin, y + 1, margin + 38, y + 1); 
-        y += 6;
-
-        const bodyA = ausentes.map((a, i) => {
-          const al = alunos.find(alx => alx.id === a.alunoId);
-          return [i + 1, a.alunoNome, al ? al.mat : '—'];
-        });
-
-        autoTable(doc, {
-          startY: y, theme: 'plain', margin: { left: margin, right: margin },
-          head: [['#', 'Nome do Aluno', 'Matrícula']], body: bodyA,
-          headStyles: { fillColor: [184, 58, 46], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9, cellPadding: 3 },
-          bodyStyles: { fontSize: 9.5, cellPadding: 3, textColor: [42, 37, 32] },
-          alternateRowStyles: { fillColor: [248, 245, 240] },
-          columnStyles: { 0: { halign: 'center', cellWidth: 12 }, 2: { halign: 'center', cellWidth: 25 } }
+          columnStyles: { 0: { halign: 'center', cellWidth: 10 }, 2: { halign: 'center', cellWidth: 25 }, 3: { halign: 'center', cellWidth: 25 } },
+          didParseCell: function(data: any) {
+             if (data.section === 'body' && data.column.index === 3) {
+                if (data.cell.raw === 'Ausente') {
+                  data.cell.styles.textColor = [184, 58, 46];
+                  data.cell.styles.fontStyle = 'bold';
+                } else if (data.cell.raw === 'Visitante') {
+                  data.cell.styles.textColor = [29, 111, 165];
+                  data.cell.styles.fontStyle = 'bold';
+                } else if (data.cell.raw === 'Presente') {
+                  data.cell.styles.textColor = [20, 90, 42];
+                }
+             }
+          }
         });
         y = (doc as any).lastAutoTable.finalY + 4;
       }
@@ -497,35 +489,6 @@ export default function Chamadas() {
           <div className="flex items-center gap-[9px]">
             <History size={18} className="text-[var(--color-accent)]" /> Histórico de Chamadas
           </div>
-          <label className="px-4 py-2 bg-[var(--color-accent)] text-white rounded-lg text-[13px] font-bold cursor-pointer transition-transform hover:scale-[1.02] flex items-center gap-2" title="Definir a logo que aparecerá nos próximos PDFs">
-            <input type="file" accept="image/*" className="hidden" onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) {
-                const reader = new FileReader();
-                reader.onloadend = () => {
-                  const img = new window.Image();
-                  img.onload = () => {
-                    const canvas = document.createElement('canvas');
-                    let width = img.width; let height = img.height;
-                    const MAX = 500;
-                    if (width > height) { if (width > MAX) { height *= MAX/width; width = MAX; } }
-                    else { if (height > MAX) { width *= MAX/height; height = MAX; } }
-                    canvas.width = width; canvas.height = height;
-                    const ctx = canvas.getContext('2d');
-                    ctx?.drawImage(img, 0, 0, width, height);
-                    try {
-                      localStorage.setItem('app_logo', canvas.toDataURL('image/png'));
-                      toast("Logo do PDF alterada com sucesso!", "ok");
-                      setTimeout(() => window.location.reload(), 800);
-                    } catch (err) { alert("Imagem muito pesada."); }
-                  };
-                  img.src = reader.result as string;
-                }
-                reader.readAsDataURL(file);
-              }
-            }} />
-            <span className="flex items-center gap-2"><Upload size={14}/> Alterar Logo do PDF Localmente</span>
-          </label>
         </div>
         
         <div className="overflow-x-auto">
@@ -572,9 +535,9 @@ export default function Chamadas() {
                        </td>
                        <td className="py-2.5 px-[13px] text-[13.5px] border-b border-[var(--color-border)] align-middle">{c.qtdBiblia || 0}</td>
                        <td className="py-2.5 px-[13px] text-[13.5px] border-b border-[var(--color-border)] align-middle">{c.qtdRevista || 0}</td>
-                       <td className="py-2.5 px-[13px] text-[13.5px] border-b border-[var(--color-border)] align-middle text-right">
-                         <button onClick={() => gerarPDF(c.id)} title="Gerar PDF" className="px-3 py-1.5 rounded-md text-[12px] bg-[#8b1a1a] text-white hover:bg-[#a62222] transition-all mr-1.5"><FileText size={14} /></button>
-                         <button onClick={() => {setChamadaToDelete(c.id); setIsModalOpen(true);}} className="px-3 py-1.5 rounded-md text-[12px] bg-[var(--color-danger)] text-white hover:bg-[#9c2f24] transition-all"><Trash2 size={14} /></button>
+                       <td className="py-2.5 px-[13px] text-[13.5px] border-b border-[var(--color-border)] align-middle text-right flex justify-end gap-1.5">
+                         <button onClick={() => gerarPDF(c.id)} title="Gerar Relatório em PDF" className="px-3 py-1.5 rounded-md text-[12px] font-semibold bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-light)] transition-all flex items-center gap-1.5"><FileText size={14} /> <span className="hidden sm:inline">Relatório PDF</span></button>
+                         <button onClick={() => {setChamadaToDelete(c.id); setIsModalOpen(true);}} title="Excluir Chamada" className="px-3 py-1.5 rounded-md text-[12px] bg-[var(--color-danger)] text-white hover:bg-[#9c2f24] transition-all flex items-center"><Trash2 size={14} /></button>
                        </td>
                      </tr>
                    )

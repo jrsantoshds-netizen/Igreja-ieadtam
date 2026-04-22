@@ -1,24 +1,61 @@
-'use client';
+import { 
+  collection, 
+  getDocs, 
+  setDoc, 
+  doc, 
+  deleteDoc, 
+  query, 
+  where,
+  serverTimestamp,
+  orderBy
+} from 'firebase/firestore';
+import { db } from './firebase';
 
-// Generic localStorage wrapper for the application
-const DB_PREFIX = 'igreja_db_';
-
-export function dbGet<T>(table: string): T[] {
-  if (typeof window === 'undefined') return [];
+export async function dbGet<T>(table: string, congregacao: string): Promise<T[]> {
+  if (!congregacao) return [];
   try {
-    const data = localStorage.getItem(DB_PREFIX + table);
-    return data ? JSON.parse(data) : [];
+    let q;
+    if (congregacao === '*') {
+      // Admin sees all (if you want admin to see all. Since indexes might be required for orderBy, let's keep it simple)
+      q = query(collection(db, table));
+    } else {
+      q = query(collection(db, table), where('congregacao', '==', congregacao));
+    }
+    
+    const snapshot = await getDocs(q);
+    
+    return snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as unknown as T));
   } catch (e) {
+    console.error('Error fetching data:', e);
     return [];
   }
 }
 
-export function dbSet<T>(table: string, data: T[]) {
-  if (typeof window === 'undefined') return;
+export async function dbSave<T extends { id: string }>(table: string, data: T, congregacao: string, uid: string) {
+  if (!data.id || !congregacao || !uid) return;
   try {
-    localStorage.setItem(DB_PREFIX + table, JSON.stringify(data));
+    const docRef = doc(db, table, data.id);
+    const existing = await getDocs(query(collection(db, table), where('id', '==', data.id)));
+    
+    const payload = { ...data, congregacao };
+    if (existing.empty && !(payload as any).createdAt) {
+      (payload as any).createdAt = serverTimestamp();
+      (payload as any).createdBy = uid;
+    }
+    
+    await setDoc(docRef, payload, { merge: true });
   } catch (e) {
-    console.error('Error saving data:', e);
+    console.error('Error saving document:', e);
+    throw e;
+  }
+}
+
+export async function dbDelete(table: string, id: string) {
+  try {
+    await deleteDoc(doc(db, table, id));
+  } catch (e) {
+    console.error('Error deleting document:', e);
+    throw e;
   }
 }
 
@@ -43,6 +80,7 @@ export interface Aluno {
   end: string;
   cont: string;
   sexo: string;
+  congregacao?: string;
 }
 
 export interface Turma {
@@ -52,6 +90,7 @@ export interface Turma {
   turno: string;
   licaoId: string;
   alunos: string[];
+  congregacao?: string;
 }
 
 export interface Licao {
@@ -60,6 +99,7 @@ export interface Licao {
   nome: string;
   ini: string; // YYYY-MM-DD
   fim: string; // YYYY-MM-DD
+  congregacao?: string;
 }
 
 export interface Dizimo {
@@ -69,6 +109,7 @@ export interface Dizimo {
   turno: string;
   valor: number;
   data: string; // YYYY-MM-DD
+  congregacao?: string;
 }
 
 export interface ChamadaRegistro {
@@ -86,4 +127,5 @@ export interface Chamada {
   qtdBiblia: number;
   qtdRevista: number;
   qtdVisitante?: number;
+  congregacao?: string;
 }

@@ -1,0 +1,137 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile containing authentication metadata, role, and congregation affiliation.",
+      "type": "object",
+      "properties": {
+        "congregacao": { "type": "string", "description": "The congregation the user belongs to. Determines their data isolation scope." },
+        "role": { "type": "string", "enum": ["admin", "usuario"], "description": "User access level." },
+        "email": { "type": "string", "description": "User's emailaddress." },
+        "nome": { "type": "string" },
+        "createdAt": { "type": "string", "format": "timestamp" }
+      },
+      "required": ["congregacao", "role", "email"]
+    },
+    "Aluno": {
+      "title": "Aluno",
+      "description": "A student in the Sunday School.",
+      "type": "object",
+      "properties": {
+        "congregacao": { "type": "string" },
+        "mat": { "type": "string" },
+        "nome": { "type": "string" },
+        "end": { "type": "string" },
+        "cont": { "type": "string" },
+        "sexo": { "type": "string" },
+        "createdAt": { "type": "string", "format": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["congregacao", "nome", "mat"]
+    },
+    "Turma": {
+      "title": "Turma",
+      "description": "A class for Sunday School.",
+      "type": "object",
+      "properties": {
+        "congregacao": { "type": "string" },
+        "nome": { "type": "string" },
+        "prof": { "type": "string" },
+        "turno": { "type": "string" },
+        "licaoId": { "type": "string" },
+        "alunos": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string", "format": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["congregacao", "nome"]
+    },
+    "Licao": {
+      "title": "Licao",
+      "description": "A lesson module running over a period.",
+      "type": "object",
+      "properties": {
+        "congregacao": { "type": "string" },
+        "cod": { "type": "string" },
+        "nome": { "type": "string" },
+        "ini": { "type": "string" },
+        "fim": { "type": "string" },
+        "createdAt": { "type": "string", "format": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["congregacao", "cod", "nome", "ini", "fim"]
+    },
+    "Dizimo": {
+      "title": "Dizimo",
+      "description": "A financial offering registration.",
+      "type": "object",
+      "properties": {
+        "congregacao": { "type": "string" },
+        "turmaId": { "type": "string" },
+        "turmaNome": { "type": "string" },
+        "turno": { "type": "string" },
+        "valor": { "type": "number" },
+        "data": { "type": "string" },
+        "createdAt": { "type": "string", "format": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["congregacao", "turmaId", "valor", "data"]
+    },
+    "ChamadaRegistro": {
+      "title": "ChamadaRegistro",
+      "type": "object",
+      "properties": {
+        "alunoId": { "type": "string" },
+        "alunoNome": { "type": "string" },
+        "status": { "type": "string", "enum": ["presente", "ausente", "visitante", ""] }
+      },
+      "required": ["alunoId", "status"]
+    },
+    "Chamada": {
+      "title": "Chamada",
+      "description": "Attendance record.",
+      "type": "object",
+      "properties": {
+        "congregacao": { "type": "string" },
+        "turmaId": { "type": "string" },
+        "turmaNome": { "type": "string" },
+        "data": { "type": "string" },
+        "registros": {
+          "type": "array",
+          "items": { "$ref": "ChamadaRegistro" }
+        },
+        "qtdBiblia": { "type": "number" },
+        "qtdRevista": { "type": "number" },
+        "qtdVisitante": { "type": "number" },
+        "createdAt": { "type": "string", "format": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["congregacao", "turmaId", "data", "registros"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles determining roles and congregation isolation scope. Users can only be created by themselves upon registration or by admins."
+    },
+    "/alunos/{alunoId}": {
+      "schema": "Aluno",
+      "description": "Students list. Isolated across congregations."
+    },
+    "/turmas/{turmaId}": {
+      "schema": "Turma",
+      "description": "Classes list. Isolated across congregations."
+    },
+    "/licoes/{licaoId}": {
+      "schema": "Licao",
+      "description": "Lessons list. Isolated across congregations."
+    },
+    "/dizimos/{dizimoId}": {
+      "schema": "Dizimo",
+      "description": "Offerings. Isolated across congregations."
+    },
+    "/chamadas/{chamadaId}": {
+      "schema": "Chamada",
+      "description": "Attendance list. Isolated across congregations."
+    }
+  }
+}

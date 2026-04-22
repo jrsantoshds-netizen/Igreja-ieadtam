@@ -12,70 +12,19 @@ import {
   ClipboardCheck, 
   Menu,
   X,
-  Upload
+  Upload,
+  LogOut
 } from 'lucide-react';
 import Image from 'next/image';
+import { useAuth } from './AuthProvider';
 
-const defaultFallbackLogo = "https://z-cdn-media.chatglm.cn/files/03a5ef41-f7b6-4ed2-a240-4d9c1dc4793b.png?auth_key=1876650640-c3016c3123344dec99c7e0febd679e91-0-d7db01960d2dc11a359a1b2e2f825106";
+const defaultFallbackLogo = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%231a4536'/%3E%3Ccircle cx='50' cy='50' r='30' fill='none' stroke='%23d4af37' stroke-width='4'/%3E%3Cpath d='M35 60 Q50 30 65 60' fill='none' stroke='%23d4af37' stroke-width='4'/%3E%3Cpath d='M50 40 L50 80' stroke='%23d4af37' stroke-width='4'/%3E%3C/svg%3E";
 
 export default function SidebarLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [customLogo, setCustomLogo] = useState<string | null>(null);
-
-  useEffect(() => {
-    const savedLogo = localStorage.getItem('app_logo');
-    if (savedLogo) {
-      setCustomLogo(savedLogo);
-    }
-  }, []);
-
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        // Redimensiona a imagem usando o Canvas para não estourar o limite do LocalStorage
-        const img = new window.Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          const MAX_WIDTH = 500;
-          const MAX_HEIGHT = 500;
-          let width = img.width;
-          let height = img.height;
-
-          if (width > height) {
-            if (width > MAX_WIDTH) {
-              height *= MAX_WIDTH / width;
-              width = MAX_WIDTH;
-            }
-          } else {
-            if (height > MAX_HEIGHT) {
-              width *= MAX_HEIGHT / height;
-              height = MAX_HEIGHT;
-            }
-          }
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          ctx?.drawImage(img, 0, 0, width, height);
-          
-          // Exporta em PNG de alta qualidade para renderizar bem no PDF transparente
-          const base64Str = canvas.toDataURL('image/png');
-
-          try {
-            localStorage.setItem('app_logo', base64Str);
-            setCustomLogo(base64Str);
-          } catch (err) {
-            console.error("Imagem muito grande para salvar no localStorage.", err);
-            alert("Erro ao salvar: a imagem ainda está muito pesada.");
-          }
-        };
-        img.src = reader.result as string;
-      };
-      reader.readAsDataURL(file);
-    }
-  };
+  
+  const { profile, logout } = useAuth();
 
   const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
 
@@ -84,8 +33,8 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
     { label: 'Painel', href: '/', icon: PieChart },
     { label: 'Cadastros', type: 'header' },
     { label: 'Alunos', href: '/alunos', icon: GraduationCap },
-    { label: 'Turmas', href: '/turmas', icon: Users },
     { label: 'Lições', href: '/licoes', icon: BookOpen },
+    { label: 'Turmas', href: '/turmas', icon: Users },
     { label: 'Financeiro', type: 'header' },
     { label: 'Dízimos / Ofertas', href: '/dizimos', icon: HandCoins },
     { label: 'Frequência', type: 'header' },
@@ -110,25 +59,15 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
         role="navigation"
       >
         <div className="pt-5 pb-4 px-4 text-center relative border-b border-white/10 group">
-          <label className="w-20 h-20 mx-auto mb-2.5 rounded-full overflow-hidden border-4 border-[rgba(200,134,42,0.5)] shadow-[0_0_20px_rgba(200,134,42,0.15)] relative cursor-pointer block transition-transform group-hover:scale-105" title="Alterar Logo">
-            <input 
-              type="file" 
-              accept="image/*" 
-              className="hidden" 
-              onChange={handleLogoUpload}
-            />
-            {/* O overlay de upload aparece ao passar o mouse (desktop) ou fica indicativo */}
-            <div className="absolute inset-0 bg-black/40 z-10 hidden group-hover:flex items-center justify-center transition-opacity">
-              <Upload size={20} className="text-white opacity-80" />
-            </div>
+          <div className="w-20 h-20 mx-auto mb-2.5 rounded-full overflow-hidden border-4 border-[rgba(200,134,42,0.5)] shadow-[0_0_20px_rgba(200,134,42,0.15)] relative block transition-transform group-hover:scale-105">
             <Image 
-              src={customLogo || defaultFallbackLogo}
+              src="/logo.png"
               alt="IEADTAM Logo" 
               fill 
-              className="object-contain" 
+              className="object-contain bg-white" 
               unoptimized
             />
-          </label>
+          </div>
           <h1 className="font-serif text-[17px] font-bold text-white tracking-[1px]">IEADTAM</h1>
           <p className="text-[10px] text-white/40 mt-1 tracking-[0.5px] uppercase leading-relaxed">
             Presença Eterna<br/>do Espírito Santo
@@ -166,8 +105,20 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
           })}
         </nav>
         
-        <div className="py-[14px] px-[22px] border-t border-white/10 text-[10px] text-white/30 text-center">
-          igreja.db &middot; v1.0
+        <div className="py-4 px-4 border-t border-white/10">
+          <div className="flex items-center justify-between">
+            <div className="flex flex-col truncate pr-2">
+              <span className="text-white text-[13px] font-bold truncate">{profile?.nome || 'Usuário'}</span>
+              <span className="text-white/50 text-[11px] truncate">{profile?.congregacao || '---'} {profile?.role === 'admin' ? '(Admin)' : ''}</span>
+            </div>
+            <button onClick={logout} className="p-2 rounded-lg bg-white/5 hover:bg-red-500/20 text-white/60 hover:text-red-400 transition-colors" title="Sair">
+              <LogOut size={16} />
+            </button>
+          </div>
+        </div>
+        
+        <div className="py-[10px] px-[22px] border-t border-black/20 text-[10px] text-white/30 text-center bg-black/10">
+          igreja.db &middot; v2.0-cloud
         </div>
       </aside>
 
